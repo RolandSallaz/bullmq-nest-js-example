@@ -1,114 +1,152 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+﻿# BullMQ в NestJS: очередь отправки писем
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+В примере HTTP-запрос ставит задачу в очередь, а worker имитирует отправку
+письма за 5 секунд. BullMQ управляет задачами, Redis хранит их данные и состояние.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Запуск
 
-## Description
-
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
-
-```bash
-$ npm install
+```powershell
+npm install
+# Если .env ещё нет:
+Copy-Item .env.example .env
 ```
 
-## Compile and run the project
+Укажите в .env подключение к Redis:
 
-```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+```dotenv
+REDIS_HOST=192.168.1.92
+REDIS_PORT=6379
+REDIS_PASSWORD=ваш_пароль
+PORT=3000
 ```
 
-## Run tests
-
-```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+```powershell
+npm run start:dev
 ```
 
-## Deployment
+## 1. Подключить BullMQ к Redis
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+В src/app.module.ts задаём общее подключение:
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+```ts
+BullModule.forRoot({
+  connection: {
+    host: process.env.REDIS_HOST ?? '127.0.0.1',
+    port: Number(process.env.REDIS_PORT ?? 6379),
+    password: process.env.REDIS_PASSWORD || undefined,
+  },
+});
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+В этом проекте src/env.ts загружает .env перед чтением настроек.
 
-## Observability
+## 2. Зарегистрировать очередь
 
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
+В src/queue/queue.module.ts:
 
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
+```ts
+BullModule.registerQueue({ name: emailQueueKEY });
+```
 
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
+emailQueueKEY равен 'email'. Это имя связывает очередь, сервис и обработчик.
+Обработчик EmailProcessor обязательно добавляем в providers модуля.
 
-## Resources
+## 3. Добавить задачу — producer
 
-Check out a few resources that may come in handy when working with NestJS:
+В QueueService получаем очередь через внедрение зависимостей:
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observer](https://observer.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+```ts
+constructor(
+  @InjectQueue(emailQueueKEY)
+  private readonly emailQueue: Queue<SendEmailDto>,
+) {}
+```
 
-## Support
+Затем добавляем задачу:
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+```ts
+const job = await this.emailQueue.add('send-email', dto, {
+  attempts: 3,
+  backoff: { type: 'exponential', delay: 1000 },
+});
+```
 
-## Stay in touch
+- email — имя очереди.
+- send-email — имя задачи внутри очереди.
+- dto — данные письма, которые получит обработчик.
+- job.id — идентификатор для запроса состояния.
+- attempts: 3 — первая попытка и максимум два повтора.
+- backoff — паузы перед повторами: 1 и 2 секунды.
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+await queue.add() ждёт записи задачи в Redis. Выполнения задачи он не ждёт.
+Поэтому POST /queue/email возвращает HTTP 202 с jobId сразу после добавления.
 
-## License
+## 4. Выполнить задачу — worker
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+В src/queue/email.processor.ts:
+
+```ts
+@Processor(emailQueueKEY, { concurrency: 1 })
+export class EmailProcessor extends WorkerHost {
+  async process(job: Job<SendEmailDto>) {
+    // job.data содержит dto, переданный в queue.add().
+    await job.updateProgress(0);
+
+    // Здесь выполняется работа: в проекте — задержки вместо отправки.
+
+    await job.updateProgress(100);
+    return { simulated: true, to: job.data.to };
+  }
+}
+```
+
+BullMQ сам вызывает process(), когда worker получает задачу.
+concurrency: 1 означает одну задачу одновременно у этого worker-а.
+
+- updateProgress() записывает прогресс в Redis. Проценты задаём сами.
+- return завершает задачу успешно: состояние completed, значение доступно в returnvalue.
+- throw new Error() завершает попытку с ошибкой. BullMQ повторит её согласно attempts и backoff.
+
+Повтор заново вызывает process() с той же задачей. Добавлять её через add() повторно не нужно.
+В проекте failAttempts задаёт число искусственных ошибок: 1 — успех со второй
+попытки, 3 — окончательный failed.
+
+## 5. Прочитать состояние
+
+В QueueService:
+
+```ts
+const job = await this.emailQueue.getJob(jobId);
+if (!job) throw new NotFoundException('Задание не найдено');
+
+return {
+  status: await job.getState(),
+  progress: job.progress,
+  attemptsMade: job.attemptsMade,
+  result: job.returnvalue,
+};
+```
+
+| Состояние | Что происходит                   |
+| --------- | -------------------------------- |
+| waiting   | Задача ждёт worker-а             |
+| active    | Выполняется process()            |
+| delayed   | Задача ждёт повтора после ошибки |
+| completed | process() завершился успешно     |
+| failed    | Попытки исчерпаны                |
+
+attemptsMade — число завершившихся попыток, включая успешную.
+Весь ответ API доступен по GET /queue/jobs/:jobId.
+
+## Что попробовать изменить
+
+1. Поставьте concurrency: 2 и отправьте несколько задач: две будут выполняться одновременно.
+2. Измените attempts на 1: ошибка сразу приведёт к failed.
+3. Измените backoff.delay на 5000: повтор начнётся не раньше чем через 5 секунд.
+
+Сейчас завершённые задачи сохраняются для просмотра. Для автоматической очистки
+можно задать removeOnComplete и removeOnFail в параметрах add().
+
+Worker работает в том же процессе, что и HTTP-сервер. Redis хранит очередь,
+но код process() выполняет Node.js. Для реальных внешних действий учитывайте,
+что задача может выполняться повторно: повтор не должен создавать дубликаты.

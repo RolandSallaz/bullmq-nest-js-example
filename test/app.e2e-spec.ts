@@ -1,29 +1,48 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
+﻿import { Test } from '@nestjs/testing';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
-import { App } from 'supertest/types';
+import { setTimeout } from 'node:timers/promises';
 import { AppModule } from './../src/app.module.js';
 
-describe('AppController (e2e)', () => {
-  let app: INestApplication<App>;
+describe.skipIf(process.env.RUN_REDIS_E2E !== '1')(
+  'Email queue with Redis',
+  () => {
+    let app: INestApplication;
 
-  beforeEach(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
+    beforeAll(async () => {
+      const module = await Test.createTestingModule({
+        imports: [AppModule],
+      }).compile();
+      app = module.createNestApplication();
+      app.useGlobalPipes(
+        new ValidationPipe({ whitelist: true, transform: true }),
+      );
+      await app.init();
+    });
 
-    app = moduleFixture.createNestApplication();
-    await app.init();
-  });
+    afterAll(async () => {
+      await app?.close();
+    });
 
-  it('/ (GET)', () => {
-    return request(app.getHttpServer())
-      .get('/')
-      .expect(200)
-      .expect('Hello World!');
-  });
-
-  afterEach(async () => {
-    await app.close();
-  });
-});
+    it('accepts a job and completes it in the background', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/queue/email')
+        .send({ to: 'student@example.com', subject: 'Lesson', text: 'Hello' })
+        .expect(202);
+      expect(response.body.jobId).toBeDefined();
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline) {
+        const status = await request(app.getHttpServer())
+          .get(`/queue/jobs/${response.body.jobId}`)
+          .expect(200);
+        if (status.body.status === 'completed') {
+          expect(status.body.progress).toBe(100);
+          expect(status.body.result.simulated).toBe(true);
+          return;
+        }
+        await setTimeout(250);
+      }
+      throw new Error('Job did not complete within 15 seconds');
+    }, 20000);
+  },
+);
